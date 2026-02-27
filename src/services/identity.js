@@ -1,74 +1,83 @@
 const supabase = require('../db/supabase');
 
 /**
- * Resolves or creates a user profile based on Shopify customer data.
- * @param {Object} customerData - Normalized customer data (email, phone, shopify_customer_id, first_name, last_name)
+ * Resolves, creates, or stitches a user profile based on Shopify customer data and frontend client_id.
+ * @param {Object} customerData - Normalized customer data (email, phone, shopify_customer_id, first_name, last_name, client_id)
  * @returns {Promise<Object>} The resolved Supabase profile
  */
 async function resolveIdentity(customerData) {
-    const { email, phone, shopify_customer_id, first_name, last_name } = customerData;
+    const { email, phone, shopify_customer_id, first_name, last_name, client_id } = customerData;
 
-    console.log(`[IDENTITY] Resolving identity for Shopify ID: ${shopify_customer_id}`);
+    console.log(`[IDENTITY] Resolving identity for Email: ${email || 'N/A'}, ClientID: ${client_id || 'N/A'}, ShopifyID: ${shopify_customer_id || 'N/A'}`);
 
     try {
-        // 1. Try to find by Shopify Customer ID
-        if (shopify_customer_id) {
-            const { data: byId, error: errorId } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('shopify_customer_id', shopify_customer_id)
-                .single();
+        let profile = null;
 
-            if (byId) {
-                console.log(`[IDENTITY] Found profile by Shopify ID: ${byId.id}`);
-                return byId;
-            }
-        }
-
-        // 2. Try to find by Email
+        // 1. Try to find by Email, Phone, or Shopify ID first (Strong Identifiers)
         if (email) {
-            const { data: byEmail, error: errorEmail } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('email', email)
-                .single();
+            const { data } = await supabase.from('profiles').select('*').eq('email', email).single();
+            if (data) profile = data;
+        }
+        if (!profile && shopify_customer_id) {
+            const { data } = await supabase.from('profiles').select('*').eq('shopify_customer_id', shopify_customer_id).single();
+            if (data) profile = data;
+        }
+        if (!profile && phone) {
+            const { data } = await supabase.from('profiles').select('*').eq('phone', phone).single();
+            if (data) profile = data;
+        }
 
-            if (byEmail) {
-                console.log(`[IDENTITY] Found profile by Email: ${byEmail.id}`);
-                // Update Shopify ID if missing
-                if (shopify_customer_id && !byEmail.shopify_customer_id) {
-                    await supabase.from('profiles').update({ shopify_customer_id }).eq('id', byEmail.id);
+        // 2. STITCHING LOGIC
+        if (profile) {
+            console.log(`[IDENTITY] Found existing profile by strong identifier: ${profile.id}`);
+
+            // If we have a newly provided client_id from the frontend, but the existing profile doesn't have it,
+            // we stitch them together!
+            if (client_id && profile.client_id !== client_id) {
+                console.log(`[IDENTITY] Stitching ClientID ${client_id} to existing profile ${profile.id}`);
+                const { data: updatedProfile, error } = await supabase
+                    .from('profiles')
+                    .update({ client_id, shopify_customer_id, first_name, last_name }) // Update missing info too
+                    .eq('id', profile.id)
+                    .select()
+                    .single();
+                if (!error) profile = updatedProfile;
+            } else if (!profile.shopify_customer_id && shopify_customer_id) {
+                // Or just update Shopify ID if missing
+                await supabase.from('profiles').update({ shopify_customer_id, first_name, last_name }).eq('id', profile.id);
+            }
+            return profile;
+        }
+
+        // 3. Try to find by ClientID (Anonymous profile from previous visits)
+        if (client_id) {
+            const { data: byClientId } = await supabase.from('profiles').select('*').eq('client_id', client_id).single();
+            if (byClientId) {
+                console.log(`[IDENTITY] Found anonymous profile by ClientID: ${byClientId.id}`);
+                // If we now have an email (e.g. they checked out), upgrade the anonymous profile to a full profile!
+                if (email || phone || shopify_customer_id) {
+                    console.log(`[IDENTITY] Upgrading anonymous profile ${byClientId.id} with strong identifiers!`);
+                    const { data: updatedProfile, error } = await supabase
+                        .from('profiles')
+                        .update({ email, phone, shopify_customer_id, first_name, last_name })
+                        .eq('id', byClientId.id)
+                        .select()
+                        .single();
+                    if (!error) return updatedProfile;
                 }
-                return byEmail;
+                return byClientId;
             }
         }
 
-        // 3. Try to find by Phone
-        if (phone) {
-            const { data: byPhone, error: errorPhone } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('phone', phone)
-                .single();
-
-            if (byPhone) {
-                console.log(`[IDENTITY] Found profile by Phone: ${byPhone.id}`);
-                // Update Shopify ID if missing
-                if (shopify_customer_id && !byPhone.shopify_customer_id) {
-                    await supabase.from('profiles').update({ shopify_customer_id }).eq('id', byPhone.id);
-                }
-                return byPhone;
-            }
-        }
-
-        // 4. Create new Profile if no match found
+        // 4. Create new Profile if no match found at all
         console.log('[IDENTITY] No match found. Creating new profile...');
         const newProfile = {
             shopify_customer_id,
             email,
             phone,
             first_name,
-            last_name
+            last_name,
+            client_id
         };
 
         const { data: created, error: createError } = await supabase
@@ -86,8 +95,6 @@ async function resolveIdentity(customerData) {
 
     } catch (error) {
         console.error('[IDENTITY] Error resolving identity:', error.message);
-        // Fallback: Return null or throw, depending on how strict we want the worker to be.
-        // For now, allow processing to continue without profile, or retry.
         throw error;
     }
 }

@@ -15,71 +15,101 @@ const worker = new Worker('shopify-webhooks', async (job) => {
     const { resolveIdentity } = require('./services/identity');
     const { hasAdConsent } = require('./services/gdpr');
     const { sendEnhancedConversion } = require('./services/google_ads');
-
-    // ... (existing code)
+    const { insertEvent } = require('./services/events');
 
     try {
-        // 1. Validate payload structure
-        const { id, email, phone, total_price, currency, customer } = job.data;
-
-        if (!id) {
-            throw new Error('Missing Order ID in payload');
-        }
-
-        // 2. Normalize Data
-        const orderData = {
-            orderId: id,
-            customerEmail: email || customer?.email,
-            customerPhone: phone || customer?.phone,
-            firstName: customer?.first_name,
-            lastName: customer?.last_name,
-            shopifyCustomerId: customer?.id,
-            amount: total_price,
-            currency: currency,
-            processedAt: new Date().toISOString()
-        };
-
-        console.log(`[WORKER] Order ${orderData.orderId} normalized:`, orderData);
-
-        // 3. Identity Resolution (Brick 3)
         let profile = null;
-        try {
+
+        // -------------------------------------------------------------
+        // BRANCH 1: FRONTEND EVENTS (Pixel)
+        // -------------------------------------------------------------
+        if (job.name === 'process_frontend_event') {
+            const { event_name, id, clientId, timestamp, url, data } = job.data;
+
+            if (!clientId) throw new Error('Missing clientId in frontend event');
+
+            // Extraction d'un email potentiel depuis le payload frontend (ex: checkout)
+            const potentialEmail = data?.checkout?.email || data?.customer?.email || null;
+
+            // Résolution d'identité (Création profil Anonyme ou Stitching avec l'email)
             profile = await resolveIdentity({
-                email: orderData.customerEmail,
-                phone: orderData.customerPhone,
-                first_name: orderData.firstName,
-                last_name: orderData.lastName,
-                shopify_customer_id: orderData.shopifyCustomerId
+                client_id: clientId,
+                email: potentialEmail,
             });
-        } catch (idError) {
-            console.warn(`[WORKER] Identity resolution failed for order ${orderData.orderId}:`, idError.message);
-            // Continue processing without profile, or decide to fail job
+
+            // Sauvegarde de l'événement dans l'historique de l'utilisateur
+            await insertEvent(profile.id, event_name, 'frontend', job.data);
+
+            console.log(`[WORKER] Frontend Event '${event_name}' processed successfully for profile ${profile.id}.`);
+            return { status: 'success', eventId: id, profileId: profile.id };
         }
 
-        // 4. GDPR & Google Ads (Brick 4)
-        if (profile) {
-            const consentGranted = hasAdConsent(profile);
-            console.log(`[GDPR] Consent status for profile ${profile.id}: ${consentGranted ? 'GRANTED' : 'DENIED'}`);
+        // -------------------------------------------------------------
+        // BRANCH 2: BACKEND EVENTS (Shopify Webhooks)
+        // -------------------------------------------------------------
+        else if (job.name === 'order_created') {
+            // 1. Validate payload structure
+            const { id, email, phone, total_price, currency, customer } = job.data;
 
-            if (consentGranted) {
-                try {
-                    await sendEnhancedConversion(orderData, profile);
-                    console.log(`[GOOGLE ADS] Enhanced Conversion sent for order ${orderData.orderId}`);
-                } catch (adsError) {
-                    console.error(`[GOOGLE ADS] Failed to send conversion: ${adsError.message}`);
+            if (!id) throw new Error('Missing Order ID in payload');
+
+            // 2. Normalize Data
+            const orderData = {
+                orderId: id,
+                customerEmail: email || customer?.email,
+                customerPhone: phone || customer?.phone,
+                firstName: customer?.first_name,
+                lastName: customer?.last_name,
+                shopifyCustomerId: customer?.id,
+                amount: total_price,
+                currency: currency,
+                processedAt: new Date().toISOString()
+            };
+
+            console.log(`[WORKER] Order ${orderData.orderId} normalized:`, orderData);
+
+            // 3. Identity Resolution (Brick 3)
+            try {
+                profile = await resolveIdentity({
+                    email: orderData.customerEmail,
+                    phone: orderData.customerPhone,
+                    first_name: orderData.firstName,
+                    last_name: orderData.lastName,
+                    shopify_customer_id: orderData.shopifyCustomerId
+                });
+            } catch (idError) {
+                console.warn(`[WORKER] Identity resolution failed for order ${orderData.orderId}:`, idError.message);
+            }
+
+            if (profile) {
+                // Sauvegarde de l'événement d'achat backend dans l'historique
+                await insertEvent(profile.id, 'order_created', 'backend', job.data);
+
+                // 4. GDPR & Google Ads (Brick 4)
+                const consentGranted = hasAdConsent(profile);
+                console.log(`[GDPR] Consent status for profile ${profile.id}: ${consentGranted ? 'GRANTED' : 'DENIED'}`);
+
+                if (consentGranted) {
+                    try {
+                        await sendEnhancedConversion(orderData, profile);
+                        console.log(`[GOOGLE ADS] Enhanced Conversion sent for order ${orderData.orderId}`);
+                    } catch (adsError) {
+                        console.error(`[GOOGLE ADS] Failed to send conversion: ${adsError.message}`);
+                    }
+                } else {
+                    console.log(`[GDPR] Skipping Google Ads due to lack of consent.`);
                 }
             } else {
-                console.log(`[GDPR] Skipping Google Ads due to lack of consent.`);
+                console.log(`[WORKER] No profile found, cannot determine consent. Skipping Google Ads.`);
             }
-        } else {
-            console.log(`[GDPR] No profile found, cannot determine consent. Skipping Google Ads.`);
+
+            console.log(`[WORKER] Order ${orderData.orderId} processed successfully.`);
+            return { status: 'success', orderId: orderData.orderId };
+        }
+        else {
+            throw new Error(`Unknown job name: ${job.name}`);
         }
 
-        // Simulate processing time
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        console.log(`[WORKER] Order ${orderData.orderId} processed successfully.`);
-        return { status: 'success', orderId: orderData.orderId };
     } catch (error) {
         console.error(`[WORKER] Job ${job.id} failed:`, error);
         throw error; // BullMQ will retry based on configuration
