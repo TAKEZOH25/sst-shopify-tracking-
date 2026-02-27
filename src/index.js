@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 const validateShopifyHMAC = require('./middleware/hmac');
 
 const app = express();
@@ -9,6 +10,7 @@ const PORT = process.env.PORT || 3000;
 // We need the raw body to verify the HMAC signature from Shopify
 app.use(express.json({
     verify: (req, res, buf) => {
+        // Shopify HMAC requires the raw body buffer to be exactly as received
         req.rawBody = buf;
     }
 }));
@@ -16,6 +18,30 @@ app.use(express.json({
 // Basic health check route
 app.get('/', (req, res) => {
     res.send('Server-Side Tracking Infrastructure is Running');
+});
+
+// --- SSOT: Frontend Events Track Route ---
+// CORS is enabled here to accept requests from the client's browser (Shopify domain)
+// No HMAC validation is applied because events come from the client browser.
+app.options('/api/track', cors()); // Enable pre-flight request for CORS
+app.post('/api/track', cors(), async (req, res) => {
+    const eventData = req.body;
+    const eventName = eventData.event_name || 'unknown_event';
+
+    console.log(`👁️ [FRONTEND] Événement reçu: ${eventName}`);
+
+    try {
+        const { webhookQueue } = require('./queue/queue');
+        // Insert into BullMQ queue with a distinct job name
+        const job = await webhookQueue.add('process_frontend_event', eventData);
+        console.log(`[QUEUE] Frontend event '${eventName}' enqueued with ID: ${job.id}`);
+
+        // Respond instantly with HTTP 200 OK to free the browser
+        res.status(200).json({ status: 'success' });
+    } catch (error) {
+        console.error('[QUEUE] Error enqueueing frontend event:', error);
+        res.status(500).json({ error: 'Internal Server Error' });
+    }
 });
 
 // Webhook route for Shopify Orders
