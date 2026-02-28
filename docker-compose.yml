@@ -17,6 +17,8 @@ services:
       - SHOPIFY_API_ADMIN
       - SHOPIFY_API_KEY
       - SHOPIFY_API_SECRET
+      - POSTHOG_API_KEY
+      - POSTHOG_HOST
     depends_on:
       - redis
 
@@ -34,6 +36,8 @@ services:
       - SHOPIFY_API_ADMIN
       - SHOPIFY_API_KEY
       - SHOPIFY_API_SECRET
+      - POSTHOG_API_KEY
+      - POSTHOG_HOST
     depends_on:
       - redis
 
