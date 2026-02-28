@@ -16,6 +16,7 @@ const worker = new Worker('shopify-webhooks', async (job) => {
     const { hasAdConsent } = require('./services/gdpr');
     const { sendEnhancedConversion } = require('./services/google_ads');
     const { insertEvent } = require('./services/events');
+    const { trackEvent } = require('./services/posthog');
 
     try {
         let profile = null;
@@ -26,7 +27,10 @@ const worker = new Worker('shopify-webhooks', async (job) => {
         if (job.name === 'process_frontend_event') {
             const { event_name, id, clientId, timestamp, url, data } = job.data;
 
-            if (!clientId) throw new Error('Missing clientId in frontend event');
+            if (!clientId) {
+                console.warn(`[WORKER] Missing clientId in frontend event. Skipping.`);
+                return { status: 'skipped', reason: 'Missing clientId' };
+            }
 
             // Extraction d'un email potentiel depuis le payload frontend (ex: checkout)
             const potentialEmail = data?.checkout?.email || data?.customer?.email || null;
@@ -39,6 +43,13 @@ const worker = new Worker('shopify-webhooks', async (job) => {
 
             // Sauvegarde de l'événement dans l'historique de l'utilisateur
             await insertEvent(profile.id, event_name, 'frontend', job.data);
+
+            // POSTHOG: Analytics Tracking
+            trackEvent(profile.id, event_name, {
+                $current_url: url,
+                frontend_client_id: clientId,
+                ...data
+            });
 
             console.log(`[WORKER] Frontend Event '${event_name}' processed successfully for profile ${profile.id}.`);
             return { status: 'success', eventId: id, profileId: profile.id };
@@ -86,7 +97,14 @@ const worker = new Worker('shopify-webhooks', async (job) => {
                 // Sauvegarde de l'événement d'achat backend dans l'historique
                 await insertEvent(profile.id, 'order_created', 'backend', job.data);
 
-                // 4. GDPR & Google Ads (Brick 4)
+                // POSTHOG: Track successful order
+                trackEvent(profile.id, 'order_created', {
+                    revenue: orderData.amount,
+                    currency: orderData.currency,
+                    order_id: orderData.orderId
+                });
+
+                // 4. GDPR & Google Ads (Brick 4) - Temporarily bypassed to focus on Analytics
                 const consentGranted = hasAdConsent(profile);
                 console.log(`[GDPR] Consent status for profile ${profile.id}: ${consentGranted ? 'GRANTED' : 'DENIED'}`);
 
