@@ -17,8 +17,20 @@ app.get('/', (req, res) => {
 // CORS is enabled here to accept requests from the client's browser (Shopify domain)
 // No HMAC validation is applied because events come from the client browser.
 app.options('/api/track', cors()); // Enable pre-flight request for CORS
-app.post('/api/track', cors(), express.json(), async (req, res) => {
-    const eventData = req.body;
+// Pour sendBeacon (qui envoie du text/plain) ou standard fetch (application/json)
+app.post('/api/track', cors(), express.json(), express.text(), async (req, res) => {
+    let eventData = req.body;
+
+    // Si la requête vient de sendBeacon, le body est un string
+    if (typeof eventData === 'string') {
+        try {
+            eventData = JSON.parse(eventData);
+        } catch (e) {
+            console.error('[FRONTEND] Failed to parse beacon text payload', e);
+            eventData = {};
+        }
+    }
+
     const eventName = eventData.event_name || 'unknown_event';
 
     // Generate a fallback client ID if missing

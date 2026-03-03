@@ -25,7 +25,8 @@ const worker = new Worker('shopify-webhooks', async (job) => {
         // BRANCH 1: FRONTEND EVENTS (Pixel)
         // -------------------------------------------------------------
         if (job.name === 'process_frontend_event') {
-            const { event_name, id, clientId, timestamp, url, data } = job.data;
+            const { id, clientId, timestamp, url, data } = job.data;
+            const event_name = job.data.event_name || 'unknown_event';
 
             if (!clientId) {
                 console.warn(`[WORKER] Missing clientId in frontend event. Skipping.`);
@@ -35,10 +36,14 @@ const worker = new Worker('shopify-webhooks', async (job) => {
             // Extraction d'un email potentiel depuis le payload frontend (ex: checkout)
             const potentialEmail = data?.checkout?.email || data?.customer?.email || null;
 
-            // Résolution d'identité (Création profil Anonyme ou Stitching avec l'email)
+            // Extraction du statut de consentement (s'il est envoyé par le pixel frontend)
+            const consent_status = data?.consent_status || job.data?.consent_status || null;
+
+            // Résolution d'identité (Création profil Anonyme ou Stitching avec l'email et Consentement)
             profile = await resolveIdentity({
                 client_id: clientId,
                 email: potentialEmail,
+                consent_status: consent_status
             });
 
             // Sauvegarde de l'événement dans l'historique de l'utilisateur

@@ -6,9 +6,9 @@ const supabase = require('../db/supabase');
  * @returns {Promise<Object>} The resolved Supabase profile
  */
 async function resolveIdentity(customerData) {
-    const { email, phone, shopify_customer_id, first_name, last_name, client_id } = customerData;
+    const { email, phone, shopify_customer_id, first_name, last_name, client_id, consent_status } = customerData;
 
-    console.log(`[IDENTITY] Resolving identity for Email: ${email || 'N/A'}, ClientID: ${client_id || 'N/A'}, ShopifyID: ${shopify_customer_id || 'N/A'}`);
+    console.log(`[IDENTITY] Resolving identity for Email: ${email || 'N/A'}, ClientID: ${client_id || 'N/A'}, ShopifyID: ${shopify_customer_id || 'N/A'}, Consent: ${JSON.stringify(consent_status) || 'N/A'}`);
 
     try {
         let profile = null;
@@ -35,16 +35,31 @@ async function resolveIdentity(customerData) {
             // we stitch them together!
             if (client_id && profile.client_id !== client_id) {
                 console.log(`[IDENTITY] Stitching ClientID ${client_id} to existing profile ${profile.id}`);
+                const updatePayload = { client_id, shopify_customer_id, first_name, last_name };
+                if (consent_status) updatePayload.consent_status = consent_status;
+
                 const { data: updatedProfile, error } = await supabase
                     .from('profiles')
-                    .update({ client_id, shopify_customer_id, first_name, last_name }) // Update missing info too
+                    .update(updatePayload) // Update missing info too
                     .eq('id', profile.id)
                     .select()
                     .single();
                 if (!error) profile = updatedProfile;
-            } else if (!profile.shopify_customer_id && shopify_customer_id) {
-                // Or just update Shopify ID if missing
-                await supabase.from('profiles').update({ shopify_customer_id, first_name, last_name }).eq('id', profile.id);
+            } else {
+                // Update Shopify ID or Consent Status if missing or changed
+                const updatePayload = {};
+                if (!profile.shopify_customer_id && shopify_customer_id) updatePayload.shopify_customer_id = shopify_customer_id;
+                if (!profile.first_name && first_name) updatePayload.first_name = first_name;
+                if (!profile.last_name && last_name) updatePayload.last_name = last_name;
+
+                // If we get a new consent status, update it
+                if (consent_status && JSON.stringify(profile.consent_status) !== JSON.stringify(consent_status)) {
+                    updatePayload.consent_status = consent_status;
+                }
+
+                if (Object.keys(updatePayload).length > 0) {
+                    await supabase.from('profiles').update(updatePayload).eq('id', profile.id);
+                }
             }
             return profile;
         }
@@ -54,12 +69,20 @@ async function resolveIdentity(customerData) {
             const { data: byClientId } = await supabase.from('profiles').select('*').eq('client_id', client_id).single();
             if (byClientId) {
                 console.log(`[IDENTITY] Found anonymous profile by ClientID: ${byClientId.id}`);
-                // If we now have an email (e.g. they checked out), upgrade the anonymous profile to a full profile!
-                if (email || phone || shopify_customer_id) {
-                    console.log(`[IDENTITY] Upgrading anonymous profile ${byClientId.id} with strong identifiers!`);
+                // If we now have an email (e.g. they checked out) or a new consent status, update the anonymous profile
+                const updatePayload = {};
+                if (email && !byClientId.email) updatePayload.email = email;
+                if (phone && !byClientId.phone) updatePayload.phone = phone;
+                if (shopify_customer_id && !byClientId.shopify_customer_id) updatePayload.shopify_customer_id = shopify_customer_id;
+                if (first_name && !byClientId.first_name) updatePayload.first_name = first_name;
+                if (last_name && !byClientId.last_name) updatePayload.last_name = last_name;
+                if (consent_status && JSON.stringify(byClientId.consent_status) !== JSON.stringify(consent_status)) updatePayload.consent_status = consent_status;
+
+                if (Object.keys(updatePayload).length > 0) {
+                    console.log(`[IDENTITY] Upgrading anonymous profile ${byClientId.id} with new data!`);
                     const { data: updatedProfile, error } = await supabase
                         .from('profiles')
-                        .update({ email, phone, shopify_customer_id, first_name, last_name })
+                        .update(updatePayload)
                         .eq('id', byClientId.id)
                         .select()
                         .single();
@@ -77,7 +100,8 @@ async function resolveIdentity(customerData) {
             phone,
             first_name,
             last_name,
-            client_id
+            client_id,
+            consent_status
         };
 
         const { data: created, error: createError } = await supabase
@@ -87,6 +111,12 @@ async function resolveIdentity(customerData) {
             .single();
 
         if (createError) {
+            // Handle Race Condition: If another concurrent process just inserted this client_id
+            if (createError.code === '23505' && client_id) {
+                console.warn(`[IDENTITY] Race condition caught: Profile for ${client_id} was just created by another thread.`);
+                const { data: retryData } = await supabase.from('profiles').select('*').eq('client_id', client_id).single();
+                if (retryData) return retryData;
+            }
             throw createError;
         }
 
