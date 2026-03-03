@@ -1,19 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const validateShopifyHMAC = require('./middleware/hmac');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware to parse JSON bodies
-// We need the raw body to verify the HMAC signature from Shopify
-app.use(express.json({
-    verify: (req, res, buf) => {
-        // Shopify HMAC requires the raw body buffer to be exactly as received
-        req.rawBody = buf;
-    }
-}));
 
 // Basic health check route
 app.get('/', (req, res) => {
@@ -24,9 +17,17 @@ app.get('/', (req, res) => {
 // CORS is enabled here to accept requests from the client's browser (Shopify domain)
 // No HMAC validation is applied because events come from the client browser.
 app.options('/api/track', cors()); // Enable pre-flight request for CORS
-app.post('/api/track', cors(), async (req, res) => {
+app.post('/api/track', cors(), express.json(), async (req, res) => {
     const eventData = req.body;
     const eventName = eventData.event_name || 'unknown_event';
+
+    // Generate a fallback client ID if missing
+    if (!eventData.clientId) {
+        const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown_ip';
+        const userAgent = req.get('User-Agent') || 'unknown_ua';
+        eventData.clientId = crypto.createHash('sha256').update(`${ip}-${userAgent}`).digest('hex');
+        console.log(`[FRONTEND] Generated fallback clientId: ${eventData.clientId}`);
+    }
 
     console.log(`👁️ [FRONTEND] Événement reçu: ${eventName}`);
 
@@ -45,12 +46,14 @@ app.post('/api/track', cors(), async (req, res) => {
 });
 
 // Webhook route for Shopify Orders
-app.post('/webhooks/shopify/orders', validateShopifyHMAC, async (req, res) => {
+app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), validateShopifyHMAC, async (req, res) => {
     console.log('[WEBHOOK] Received /webhooks/shopify/orders ping');
 
     try {
         const { webhookQueue } = require('./queue/queue');
-        const job = await webhookQueue.add('order_created', req.body);
+        // Parse the validated raw body into a JSON object before passing it to the queue
+        const orderData = JSON.parse(req.body.toString('utf8'));
+        const job = await webhookQueue.add('order_created', orderData);
         console.log(`[QUEUE] Job enqueued with ID: ${job.id}`);
 
         // Return 200 OK instantly as required

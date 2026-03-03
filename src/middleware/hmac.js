@@ -2,8 +2,9 @@ const crypto = require('crypto');
 
 const validateShopifyHMAC = (req, res, next) => {
   const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
-  const body = req.rawBody;
-  const secret = process.env.SHOPIFY_API_SECRET;
+  // req.body is now a Buffer because of express.raw()
+  const body = req.body;
+  const secret = process.env.SHOPIFY_API_SECRET ? process.env.SHOPIFY_API_SECRET.trim() : null;
 
   if (!secret) {
     console.error('[SECURITY] SHOPIFY_API_SECRET is not set in environment variables.');
@@ -17,8 +18,13 @@ const validateShopifyHMAC = (req, res, next) => {
 
   const generatedHash = crypto
     .createHmac('sha256', secret)
-    .update(body, 'utf8')
+    .update(body)
     .digest('base64');
+
+  console.log(`[DEBUG] Secret length: ${secret.length}`);
+  console.log(`[DEBUG] Raw body type: ${typeof body}, length: ${body.length}`);
+  console.log(`[DEBUG] Expected Signature (Header): ${hmacHeader}`);
+  console.log(`[DEBUG] Computed Signature: ${generatedHash}`);
 
   // Timing-safe comparison to prevent timing attacks
   try {
