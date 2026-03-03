@@ -1,68 +1,68 @@
-const axios = require('axios'); // We might need to install axios
+const axios = require('axios');
 const { hashPII } = require('./gdpr');
 
-const GOOGLE_ADS_API_VERSION = 'v15'; // Check for latest version
-const GOOGLE_ADS_CUSTOMER_ID = process.env.GOOGLE_ADS_CUSTOMER_ID;
-const GOOGLE_ADS_DEVELOPER_TOKEN = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
-// Note: Real Google Ads integration requires OAuth2 or Service Account flow.
-// For simplicity in this brick, we'll structure the payload and log the request.
+// On utilise le GA4 Measurement Protocol
+const GA4_API_URL = 'https://www.google-analytics.com/mp/collect';
 
 /**
- * Sends Enhanced Conversion to Google Ads.
- * @param {Object} orderData - Normalized order data
- * @param {Object} profile - Resolved user profile
+ * Envoie un événement standard au serveur GA4 via le Measurement Protocol.
+ * 
+ * @param {string} eventName - Nom de l'événement (ex: page_view, view_item, purchase)
+ * @param {Object} eventParams - Les paramètres de l'événement (ex: items, value, currency)
+ * @param {Object} profile - Le profil utilisateur (contenant le clientId et le consentement)
  */
-async function sendEnhancedConversion(orderData, profile) {
-    console.log(`[GOOGLE ADS] Preparing Enhanced Conversion for Order ${orderData.orderId}`);
+async function sendGA4Event(eventName, eventParams, profile) {
+    console.log(`[GA4 / GOOGLE ADS] Preparing Event '${eventName}'`);
 
-    // 1. Prepare User Identifiers with Hashing
-    const userIdentifiers = [];
+    // Variables d'environnement nécessaires pour GA4 MP
+    const measurementId = process.env.GA4_MEASUREMENT_ID; // ex: G-XXXXXXX
+    const apiSecret = process.env.GA4_API_SECRET;         // Généré depuis l'admin GA4
 
-    if (profile.email) {
-        userIdentifiers.push({
-            user_identifier_source: 'FIRST_PARTY',
-            hashed_email: hashPII(profile.email)
-        });
+    if (!measurementId || !apiSecret) {
+        console.warn('[GA4 / GOOGLE ADS] Missing GA4_MEASUREMENT_ID or GA4_API_SECRET in environment. Skipping event.');
+        return { status: 'skipped', reason: 'missing_credentials' };
     }
 
-    if (profile.phone) {
-        userIdentifiers.push({
-            user_identifier_source: 'FIRST_PARTY',
-            hashed_phone_number: hashPII(profile.phone)
-        });
-    }
+    // 1. Préparation des identifiants (Hachage RGPD pour Enhanced Conversions)
+    const userData = {};
+    if (profile.email) userData.sha256_email_address = hashPII(profile.email);
+    if (profile.phone) userData.sha256_phone_number = hashPII(profile.phone);
 
-    // 2. Construct Payload
-    const conversionActionId = process.env.GOOGLE_ADS_CONVERSION_ACTION_ID; // From .env
-    const body = {
-        conversionAction: `customers/${GOOGLE_ADS_CUSTOMER_ID}/conversionActions/${conversionActionId}`,
-        conversionDateTime: orderData.processedAt, // Format check needed: "yyyy-mm-dd hh:mm:ss+|-hh:mm"
-        conversionValue: orderData.amount,
-        currencyCode: orderData.currency,
-        orderId: orderData.orderId,
-        userIdentifiers: userIdentifiers
+    // 2. Préparation du Consentement
+    const consent = {
+        ad_storage: profile.consent_status?.ad_storage || 'denied',
+        analytics_storage: profile.consent_status?.analytics_storage || 'denied',
+        ad_user_data: profile.consent_status?.ad_user_data || 'denied',
+        ad_personalization: profile.consent_status?.ad_personalization || 'denied'
     };
 
-    console.log('[GOOGLE ADS] Payload:', JSON.stringify(body, null, 2));
+    // 3. Construction du Payload GA4
+    const payload = {
+        client_id: profile.client_id || 'anonymous_server_client',
+        consent: consent,
+        // On n'ajoute les données utilisateur que s'il y en a, pour maximiser l'Event Match Quality
+        user_data: Object.keys(userData).length > 0 ? userData : undefined,
+        events: [{
+            name: eventName,
+            params: eventParams
+        }]
+    };
 
-    // 3. Send Request (Mocked for now)
-    // In a real scenario, we would use axios.post(...) to Google Ads API endpoint
-    // https://googleads.googleapis.com/v15/customers/{customerId}:uploadClickConversions
-
-    // Simulate API call
-    if (process.env.DRY_RUN !== 'false') {
-        console.log('[GOOGLE ADS] Dry run enabled. Skipping actual API call.');
-        return { status: 'skipped', reason: 'dry_run' };
-    }
+    const url = `${GA4_API_URL}?measurement_id=${measurementId}&api_secret=${apiSecret}`;
 
     try {
-        // await axios.post(...)
-        console.log('[GOOGLE ADS] Mock API call successful.');
+        // Le Measurement Protocol ne retourne pas d'erreur de validation (toujours 204), 
+        // d'où l'importance d'envoyer un setup propre.
+        const response = await axios.post(url, payload, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        console.log(`[GA4 / GOOGLE ADS] MP Call successful for '${eventName}' (Status: ${response.status})`);
         return { status: 'success' };
     } catch (error) {
-        console.error('[GOOGLE ADS] API Error:', error.message);
+        console.error(`[GA4 / GOOGLE ADS] API Error during '${eventName}':`, error.message);
         throw error;
     }
 }
 
-module.exports = { sendEnhancedConversion };
+module.exports = { sendGA4Event };

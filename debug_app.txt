@@ -1,0 +1,73 @@
+﻿app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | npm error path /app
+app-1  | npm error command failed
+app-1  | npm error signal SIGTERM
+app-1  | npm error command sh -c node src/index.js
+app-1  | npm error A complete log of this run can be found in: /root/.npm/_logs/2026-02-20T14_44_14_180Z-debug-0.log
+app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | [SECURITY] HMAC Mismatch. Received: JMK+ho8BaF0OjnxQyC/p7RQXGgBmQe+p1xeEGAVW4jQ=, Computed: Fx2igCZL4Z+gsIfwQjFQ8v/dwipw4MCyJnp8jXq6C/A=
+app-1  | [SECURITY] HMAC Mismatch. Received: S7p+YfLLaORKPnP0bSbpbbAiUUibX5G9Tm/lzkCDzLc=, Computed: SWGozc4J6cnKet5mXKz5gyqAWolrIr7A06qUwkCqWbY=
+app-1  | npm error path /app
+app-1  | npm error command failed
+app-1  | npm error signal SIGTERM
+app-1  | npm error command sh -c node src/index.js
+app-1  | npm error A complete log of this run can be found in: /root/.npm/_logs/2026-02-20T14_56_27_770Z-debug-0.log
+app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | [SECURITY] HMAC Mismatch. Received: LWicS/UlU6YXVepc5Rx539iwHsAuzSRCKCRptTjuVu0=, Computed: aoHf2SVhbRSWV+lcizlN1di06XZB9njEd97+kPJE1XM=
+app-1  | npm error path /app
+app-1  | npm error command failed
+app-1  | npm error signal SIGTERM
+app-1  | npm error command sh -c node src/index.js
+app-1  | npm error A complete log of this run can be found in: /root/.npm/_logs/2026-02-20T15_15_45_497Z-debug-0.log
+app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | [DEBUG] Secret length: 64
+app-1  | [DEBUG] Raw body type: object, length: 4150
+app-1  | [DEBUG] Expected Signature (Header): C91SS4nSWscIhVtVAi/c7Qr2OeP30nMK4PF2qPmt4Os=
+app-1  | [DEBUG] Computed Signature: Pt3zYOpkvP/P/95kw754Y0vwEvKoEzz56k8ZuRRJRQ0=
+app-1  | [SECURITY] HMAC Mismatch. Received: C91SS4nSWscIhVtVAi/c7Qr2OeP30nMK4PF2qPmt4Os=, Computed: Pt3zYOpkvP/P/95kw754Y0vwEvKoEzz56k8ZuRRJRQ0=
+app-1  | npm error path /app
+app-1  | npm error command failed
+app-1  | npm error signal SIGTERM
+app-1  | npm error command sh -c node src/index.js
+app-1  | npm error A complete log of this run can be found in: /root/.npm/_logs/2026-02-20T15_17_56_113Z-debug-0.log
+app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | [DEBUG] Secret length: 64
+app-1  | [DEBUG] Raw body type: object, length: 4150
+app-1  | [DEBUG] Expected Signature (Header): Taf+gtYAx4uxMbonRwRUI3ZG4N37j3m/5b4BlGF+SOQ=
+app-1  | [DEBUG] Computed Signature: eyPER+G/KhAWOGsXO52BC4mi5uVAsE7LsRhaZWonY8s=
+app-1  | [SECURITY] HMAC Mismatch. Received: Taf+gtYAx4uxMbonRwRUI3ZG4N37j3m/5b4BlGF+SOQ=, Computed: eyPER+G/KhAWOGsXO52BC4mi5uVAsE7LsRhaZWonY8s=
+app-1  | npm error path /app
+app-1  | npm error command failed
+app-1  | npm error signal SIGTERM
+app-1  | npm error command sh -c node src/index.js
+app-1  | npm error A complete log of this run can be found in: /root/.npm/_logs/2026-02-20T15_23_36_672Z-debug-0.log
+app-1  | 
+app-1  | > sst-server@1.0.0 start
+app-1  | > node src/index.js
+app-1  | 
+app-1  | [SERVER] Server is running on port 3000
+app-1  | [DEBUG] Secret length: 64
+app-1  | [DEBUG] Raw body type: string, length: 4146
+app-1  | [DEBUG] Expected Signature (Header): QgMq9AB0Tl6pi0hFq+8sChT9uU2e3oNUI2qHEADbXD8=
+app-1  | [DEBUG] Computed Signature: GS+39T/Ca0lddEtSAZu+fzG/p7QmzgpH7qAd4c8A3lU=
+app-1  | [SECURITY] HMAC Mismatch. Received: QgMq9AB0Tl6pi0hFq+8sChT9uU2e3oNUI2qHEADbXD8=, Computed: GS+39T/Ca0lddEtSAZu+fzG/p7QmzgpH7qAd4c8A3lU=

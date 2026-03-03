@@ -14,7 +14,7 @@ const worker = new Worker('shopify-webhooks', async (job) => {
 
     const { resolveIdentity } = require('./services/identity');
     const { hasAdConsent } = require('./services/gdpr');
-    const { sendEnhancedConversion } = require('./services/google_ads');
+    const { sendGA4Event } = require('./services/google_ads');
     const { insertEvent } = require('./services/events');
     const { trackEvent } = require('./services/posthog');
 
@@ -56,6 +56,56 @@ const worker = new Worker('shopify-webhooks', async (job) => {
                 ...data
             });
 
+            // GA4 Measurement Protocol: Tracking de tous les événements frontend
+            const eventMapping = {
+                'page_viewed': 'page_view',
+                'product_viewed': 'view_item',
+                'product_added_to_cart': 'add_to_cart',
+                'checkout_started': 'begin_checkout',
+                'checkout_completed': 'purchase',
+                'consent_updated': 'consent_updated' // Garde le même nom
+            };
+            const ga4EventName = eventMapping[event_name] || event_name;
+
+            try {
+                const ga4Params = {
+                    page_location: url,
+                };
+
+                // Extraction pour les pages produits, paniers, etc. pour correspondre au Merchant Center
+                if (data?.productVariant) {
+                    const productVariant = data.productVariant;
+                    const product = productVariant.product || {};
+
+                    if (productVariant.price?.amount) {
+                        ga4Params.value = parseFloat(productVariant.price.amount);
+                        ga4Params.currency = productVariant.price.currencyCode || 'EUR';
+                    }
+
+                    // Construction de l'Identifiant exact pour Google Merchant Center
+                    // Format Shopify Native App: shopify_FR_[Product_ID]_[Variant_ID]
+                    const productId = product.id ? product.id.toString() : '';
+                    const variantId = productVariant.id ? productVariant.id.toString() : '';
+
+                    let mcItemId = productVariant.sku || variantId; // Fallback
+                    if (productId && variantId) {
+                        mcItemId = `shopify_FR_${productId}_${variantId}`;
+                    }
+
+                    ga4Params.items = [{
+                        item_id: mcItemId,
+                        item_name: product.title || product.untranslatedTitle || 'Unknown Product',
+                        price: ga4Params.value,
+                        quantity: 1 // Par défaut 1 pour detail/view
+                    }];
+                }
+
+                await sendGA4Event(ga4EventName, ga4Params, profile);
+                console.log(`[WORKER] GA4 MP Frontend Event '${ga4EventName}' dispatched.`);
+            } catch (err) {
+                console.error(`[WORKER] Failed to send frontend event to GA4:`, err.message);
+            }
+
             console.log(`[WORKER] Frontend Event '${event_name}' processed successfully for profile ${profile.id}.`);
             return { status: 'success', eventId: id, profileId: profile.id };
         }
@@ -65,35 +115,49 @@ const worker = new Worker('shopify-webhooks', async (job) => {
         // -------------------------------------------------------------
         else if (job.name === 'order_created') {
             // 1. Validate payload structure
-            const { email, phone, total_price, currency, customer } = job.data;
+            const { email, phone, total_price, currency, customer, line_items, processed_at } = job.data;
             const id = job.data.id || job.data.checkout_id || job.data.token || job.data.name || 'test_id_' + Date.now();
 
             if (!id) throw new Error('Missing Order ID in payload');
 
-            // 2. Normalize Data
+            // 2. Normalize Data for GA4
             const orderData = {
-                orderId: id,
-                customerEmail: email || customer?.email,
-                customerPhone: phone || customer?.phone,
-                firstName: customer?.first_name,
-                lastName: customer?.last_name,
-                shopifyCustomerId: customer?.id,
-                amount: total_price,
+                orderId: id.toString(),
+                amount: parseFloat(total_price),
                 currency: currency,
-                processedAt: new Date().toISOString()
+                processedAt: processed_at || new Date().toISOString(),
+                // Extraction des line_items pour le Measurement Protocol (Format Merchant Center)
+                items: (line_items || []).map(item => {
+                    const productId = item.product_id ? item.product_id.toString() : '';
+                    const variantId = item.variant_id ? item.variant_id.toString() : '';
+
+                    let mcItemId = item.sku || variantId; // Fallback
+                    if (productId && variantId) {
+                        mcItemId = `shopify_FR_${productId}_${variantId}`;
+                    }
+
+                    return {
+                        item_id: mcItemId,
+                        item_name: item.title || item.name,
+                        price: parseFloat(item.price),
+                        quantity: item.quantity
+                    };
+                })
+            };
+
+            const identityParams = {
+                email: email || customer?.email,
+                phone: phone || customer?.phone,
+                first_name: customer?.first_name,
+                last_name: customer?.last_name,
+                shopify_customer_id: customer?.id
             };
 
             console.log(`[WORKER] Order ${orderData.orderId} normalized:`, orderData);
 
             // 3. Identity Resolution (Brick 3)
             try {
-                profile = await resolveIdentity({
-                    email: orderData.customerEmail,
-                    phone: orderData.customerPhone,
-                    first_name: orderData.firstName,
-                    last_name: orderData.lastName,
-                    shopify_customer_id: orderData.shopifyCustomerId
-                });
+                profile = await resolveIdentity(identityParams);
             } catch (idError) {
                 console.warn(`[WORKER] Identity resolution failed for order ${orderData.orderId}:`, idError.message);
             }
@@ -109,22 +173,33 @@ const worker = new Worker('shopify-webhooks', async (job) => {
                     order_id: orderData.orderId
                 });
 
-                // 4. GDPR & Google Ads (Brick 4) - Temporarily bypassed to focus on Analytics
+                // 4. GA4 & Google Ads Measurement Protocol (Brick 4)
                 const consentGranted = hasAdConsent(profile);
                 console.log(`[GDPR] Consent status for profile ${profile.id}: ${consentGranted ? 'GRANTED' : 'DENIED'}`);
 
-                if (consentGranted) {
-                    try {
-                        await sendEnhancedConversion(orderData, profile);
-                        console.log(`[GOOGLE ADS] Enhanced Conversion sent for order ${orderData.orderId}`);
-                    } catch (adsError) {
-                        console.error(`[GOOGLE ADS] Failed to send conversion: ${adsError.message}`);
+                try {
+                    if (consentGranted) {
+                        console.log(`[WORKER] ✅ Consent granted. Sending Full Conversion to GA4...`);
+                    } else {
+                        console.log(`[WORKER] ⚠️ Consent denied. Sending Consent Mode Ping to GA4...`);
                     }
-                } else {
-                    console.log(`[GDPR] Skipping Google Ads due to lack of consent.`);
+
+                    // On envoie toujours à GA4. Si denied, GA4 (via le paramètre consent) 
+                    // traitera ça comme un Ping Consent Mode v2 anonymisé.
+                    const purchaseParams = {
+                        currency: orderData.currency,
+                        value: orderData.amount,
+                        transaction_id: orderData.orderId,
+                        items: orderData.items
+                    };
+                    const result = await sendGA4Event('purchase', purchaseParams, profile);
+                    console.log(`[WORKER] GA4 MP Result:`, result);
+
+                } catch (adsError) {
+                    console.error(`[WORKER] Failed to send conversion to GA4: ${adsError.message}`);
                 }
             } else {
-                console.log(`[WORKER] No profile found, cannot determine consent. Skipping Google Ads.`);
+                console.log(`[WORKER] No profile found for order ${orderData.orderId}. Skipping GA4.`);
             }
 
             console.log(`[WORKER] Order ${orderData.orderId} processed successfully.`);
