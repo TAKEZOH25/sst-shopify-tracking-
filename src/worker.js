@@ -25,7 +25,7 @@ const worker = new Worker('shopify-webhooks', async (job) => {
         // BRANCH 1: FRONTEND EVENTS (Pixel)
         // -------------------------------------------------------------
         if (job.name === 'process_frontend_event') {
-            const { id, clientId, timestamp, url, data } = job.data;
+            const { id, clientId, session_id, timestamp, url, data } = job.data;
             const event_name = job.data.event_name || 'unknown_event';
 
             if (!clientId) {
@@ -53,6 +53,7 @@ const worker = new Worker('shopify-webhooks', async (job) => {
             trackEvent(profile.id, event_name, {
                 $current_url: url,
                 frontend_client_id: clientId,
+                session_id: session_id,
                 ...data
             });
 
@@ -71,6 +72,9 @@ const worker = new Worker('shopify-webhooks', async (job) => {
                 const ga4Params = {
                     page_location: url,
                 };
+                if (session_id) {
+                    ga4Params.session_id = session_id;
+                }
 
                 // Extraction pour les pages produits, paniers, etc. pour correspondre au Merchant Center
                 if (data?.productVariant) {
@@ -115,10 +119,16 @@ const worker = new Worker('shopify-webhooks', async (job) => {
         // -------------------------------------------------------------
         else if (job.name === 'order_created') {
             // 1. Validate payload structure
-            const { email, phone, total_price, currency, customer, line_items, processed_at } = job.data;
+            const { email, phone, total_price, currency, customer, line_items, processed_at, order_number, abandoned_checkout_url } = job.data;
             const id = job.data.id || job.data.checkout_id || job.data.token || job.data.name || 'test_id_' + Date.now();
 
             if (!id) throw new Error('Missing Order ID in payload');
+
+            // 1.5. Filter out Abandoned Checkouts and invalid orders (Ghost Purchases Fix)
+            if (abandoned_checkout_url || !order_number) {
+                console.warn(`[WORKER] Order ${id} is an abandoned checkout or lacks an order_number. Skipping GA4 purchase event.`);
+                return { status: 'skipped', reason: 'Abandoned checkout or invalid order format' };
+            }
 
             // 2. Normalize Data for GA4
             const orderData = {

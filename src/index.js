@@ -45,8 +45,11 @@ app.post('/api/track', cors(), express.json(), express.text(), async (req, res) 
 
     try {
         const { webhookQueue } = require('./queue/queue');
-        // Insert into BullMQ queue with a distinct job name
-        const job = await webhookQueue.add('process_frontend_event', eventData);
+        // Insert into BullMQ queue with a distinct job name, and memory management
+        const job = await webhookQueue.add('process_frontend_event', eventData, {
+            removeOnComplete: true, // Optimiser la RAM
+            removeOnFail: { count: 100 } // Garder un historique limité pour le débugging
+        });
         console.log(`[QUEUE] Frontend event '${eventName}' enqueued with ID: ${job.id}`);
 
         // Respond instantly with HTTP 200 OK to free the browser
@@ -65,7 +68,15 @@ app.post('/webhooks/shopify/orders', express.raw({ type: 'application/json' }), 
         const { webhookQueue } = require('./queue/queue');
         // Parse the validated raw body into a JSON object before passing it to the queue
         const orderData = JSON.parse(req.body.toString('utf8'));
-        const job = await webhookQueue.add('order_created', orderData);
+
+        // Use Shopify Order ID as jobId for Idempotence (prevent duplicates if Shopify retries)
+        const shopifyId = orderData.id ? orderData.id.toString() : `fallback_${Date.now()}`;
+
+        const job = await webhookQueue.add('order_created', orderData, {
+            jobId: shopifyId, // Idempotence : empêche l'ajout de webhooks en double
+            removeOnComplete: true,
+            removeOnFail: { count: 100 }
+        });
         console.log(`[QUEUE] Job enqueued with ID: ${job.id}`);
 
         // Return 200 OK instantly as required
