@@ -6,19 +6,12 @@ services:
     restart: always
     ports:
       - "3000:3000"
+    env_file:
+      - .env
     environment:
       - PORT=3000
       - REDIS_URL=redis://redis:6379
       - NODE_ENV=production
-      # Secret variables defined without values for Hostinger injection
-      - SHOPIFY_WEBHOOK_SECRET
-      - SUPABASE_URL
-      - SUPABASE_SERVICE_ROLE_KEY
-      - SHOPIFY_API_ADMIN
-      - SHOPIFY_API_KEY
-      - SHOPIFY_API_SECRET
-      - POSTHOG_API_KEY
-      - POSTHOG_HOST
     depends_on:
       - redis
 
@@ -26,18 +19,11 @@ services:
     build: .
     command: npm run worker
     restart: always
+    env_file:
+      - .env
     environment:
       - REDIS_URL=redis://redis:6379
       - NODE_ENV=production
-      # Secret variables defined without values for Hostinger injection
-      - SHOPIFY_WEBHOOK_SECRET
-      - SUPABASE_URL
-      - SUPABASE_SERVICE_ROLE_KEY
-      - SHOPIFY_API_ADMIN
-      - SHOPIFY_API_KEY
-      - SHOPIFY_API_SECRET
-      - POSTHOG_API_KEY
-      - POSTHOG_HOST
     depends_on:
       - redis
 
